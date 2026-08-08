@@ -347,6 +347,9 @@ m_leds(){
   else
     ok "LED software installed (num_leds left at the existing config value)"
   fi
+  # RetroLED's install.sh already started ledcontrol.service against the DEFAULT toml;
+  # restart it now so the num_leds we just wrote takes effect immediately (no reboot needed).
+  systemctl restart ledcontrol.service 2>/dev/null || true
 }
 
 # ───────────────────────── flows ─────────────────────────
