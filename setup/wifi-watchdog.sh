@@ -2,7 +2,8 @@
 # wifi-watchdog.sh — keep the box online when its network comes over WiFi.
 #
 # Self-disabling by design, so it's safe to install on EVERY build:
-#   * "Online" means a global IPv4 on ANY interface (eth0, wlan0, wlan1, ...).
+#   * "Online" means a global IPv4 on ANY physical interface (eth0, wlan0, wlx...);
+#     virtual ones (docker0, br-*, tailscale0, ...) are ignored.
 #   * If anything has an IP, it does nothing but idle.
 #   * Only when there is NO IP anywhere does it try to recover — and it cycles
 #     through EVERY WiFi device (onboard + any USB adapter), no hardcoded names.
@@ -15,11 +16,14 @@ set -u
 LOG=/var/log/wifi-watchdog.log
 log(){ echo "$(date '+%F %T') $*" >> "$LOG"; }
 
-# Real-uplink IPv4? EXCLUDE virtual interfaces (docker/veth/bridge/VPN) — otherwise a
-# box running Docker (docker0=172.17.0.1) or Tailscale looks permanently "online" and
-# this watchdog never fires. Only physical uplinks (eth*, end*, wlan*, wlx*, ...) count.
-_real_ips(){ ip -4 -o addr show scope global 2>/dev/null \
-    | awk '$2 !~ /^(docker|veth|br-|virbr|tailscale|tun|tap|wg|zt|cni|flannel|dummy|lo)/'; }
+# Real-uplink IPv4? Only PHYSICAL interfaces count — ones backed by hardware
+# (/sys/class/net/<if>/device: eth0, wlan0, USB wlx*, ...). Virtual interfaces
+# (docker0, br-*, veth*, tailscale0, wg*, lo, ...) keep their IPv4 while the box is
+# offline; counting them makes a Docker/Tailscale box look permanently "online" and
+# this watchdog never fires. Allowlisting hardware also covers virtual types we
+# haven't thought of, which a name denylist can't.
+phys_ifs(){ for d in /sys/class/net/*; do [ -e "$d/device" ] && basename "$d"; done; }
+_real_ips(){ for i in $(phys_ifs); do ip -4 -o addr show dev "$i" scope global 2>/dev/null; done; }
 have_ip(){ _real_ips | grep -q inet; }
 # all WiFi interface names (wlan0, wlan1, wlx..., etc.)
 wifi_devs(){ for d in /sys/class/net/*/wireless; do [ -e "$d" ] && basename "$(dirname "$d")"; done; }
@@ -46,6 +50,14 @@ while true; do
     log "no IP on any interface (consecutive failures: $fails) — recovering WiFi"
     for dev in $(wifi_devs); do
         log "  trying device $dev"
+        # udev/NM race: after a power event the device can come up "unmanaged"
+        # (reason unmanaged-link-not-init) and NM will never touch it — and
+        # `nmcli device connect` FAILS on an unmanaged device. Re-manage first.
+        if nmcli -t -f DEVICE,STATE device 2>/dev/null | grep -q "^${dev}:unmanaged$"; then
+            log "  $dev is unmanaged (udev link-init race) — re-managing"
+            nmcli device set "$dev" managed yes >>"$LOG" 2>&1
+            sleep 2
+        fi
         timeout 30 nmcli device connect "$dev" >>"$LOG" 2>&1
         have_ip && { log "recovered via $dev ($(ips))"; break; }
     done

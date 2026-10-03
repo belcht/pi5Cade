@@ -177,11 +177,21 @@ online, then idles. On the reference box it brings every boot online within
 
 It is **safe to install on every build**, so `picadeinstall` enables it by
 default (skip with `--no-watchdog`). It's **self-disabling**: "online" means a
-global IPv4 on **any** interface (eth0, wlan0, wlan1, …), so on Ethernet or
-healthy WiFi it just idles. It only ever acts when there is **no IP anywhere** —
-and then it cycles through **every** WiFi device by name discovery (onboard +
-any USB adapter), so there's nothing to hardcode or edit. (This is the rewrite —
-no `CON`/`IFACE` to tune.)
+global IPv4 on **any physical** interface (eth0, wlan0, wlan1, USB `wlx…` — anything
+with a `/sys/class/net/<if>/device`), so on Ethernet or healthy WiFi it just idles.
+Virtual interfaces (`docker0`, `br-*`, `veth*`, `tailscale0`, …) are **ignored** —
+they keep their IPv4 while the box is offline, and counting them would make any
+box running Docker or Tailscale look permanently online, so the watchdog would
+never fire. It only ever acts when no physical interface has an IP — and then it
+cycles through **every** WiFi device by name discovery (onboard + any USB adapter),
+so there's nothing to hardcode or edit. (This is the rewrite — no `CON`/`IFACE` to
+tune.)
+
+It also recovers a **udev/NetworkManager race** seen after power events: the WiFi
+device comes up `unmanaged (reason 'unmanaged-link-not-init')` and NM never tries
+to connect it (a plain `nmcli device connect` just errors). Before each connect the
+watchdog checks for an `unmanaged` device and runs `nmcli device set <dev> managed
+yes` first.
 
 ```bash
 sudo install -m 755 setup/wifi-watchdog.sh      /usr/local/bin/wifi-watchdog.sh

@@ -1,5 +1,5 @@
 [Unit]
-Description=WiFi connectivity watchdog (recover flaky brcmfmac association on mesh/eero)
+Description=WiFi connectivity watchdog (reconnect WiFi when no physical interface has an IP)
 After=NetworkManager.service
 Wants=NetworkManager.service
 
